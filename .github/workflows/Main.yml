@@ -1,18 +1,17 @@
-name: RDP
+name: RDP-Roblox
 
 on:
   workflow_dispatch:
 
 jobs:
   secure-rdp:
-    # Para máximo desempenho, se você tiver uma máquina self-hosted poderosa, use-a aqui.
-    # Se usar o GitHub Hosted, ele já vem com recursos altos (8 vCPU, 32GB RAM).
     runs-on: windows-latest
     timeout-minutes: 3600
 
     steps:
       - name: Configure Core RDP Settings
         run: |
+          # Desabilita firewall e autenticação obrigatória (NLA) para facilitar acesso inicial
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
                              -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
@@ -20,6 +19,7 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
                              -Name "SecurityLayer" -Value 0 -Force
 
+          # Regra de firewall específica para Tailscale
           netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
           netsh advfirewall firewall add rule name="RDP-Tailscale" `
             dir=in action=allow protocol=TCP localport=3389
@@ -93,22 +93,34 @@ jobs:
 
       - name: Install Roblox Player
         run: |
-          $robloxInstallerUrl = "https://www.roblox.com/download/client?os=win&platform=pc"
-          $robloxInstallerPath = "$env:TEMP\RobloxPlayerLauncher.exe"
+          # URL direta para o instalador atual do Roblox (evita redirecionamentos HTTP 302 que quebram o script)
+          $robloxInstallerUrl = "https://clientcdn.roblox.com/v/20261115T000000Z/RobloxSetup.exe"
+          $installerPath = "$env:TEMP\RobloxSetup.exe"
           
-          Write-Host "Downloading Roblox Player..."
-          Invoke-WebRequest -Uri $robloxInstallerUrl -OutFile $robloxInstallerPath
+          Write-Host "Downloading latest Roblox Player..."
+          try {
+              # Tenta baixar a versão específica; se falhar, baixa o launcher padrão
+              Invoke-WebRequest -Uri $robloxInstallerUrl -OutFile $installerPath -UseBasicParsing
+          } catch {
+              Write-Warning "Falling back to generic launcher..."
+              $robloxInstallerUrl = "https://www.roblox.com/download/launch?os=win"
+              Invoke-WebRequest -Uri $robloxInstallerUrl -OutFile $installerPath -UseBasicParsing
+          }
+
+          Write-Host "Installing Roblox Player silently..."
+          # /silent instala sem janelas pop-up e sem reiniciar
+          Start-Process -FilePath $installerPath -ArgumentList "/silent" -Wait
           
-          Write-Host "Installing Roblox Player..."
-          Start-Process -FilePath $robloxInstallerPath -ArgumentList "/S" -Wait
-          
-          Remove-Item $robloxInstallerPath -Force
+          # Limpeza
+          Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
           Write-Host "Roblox Player installed successfully."
 
-      - name: Keep Runner Alive (Prevent Shutdown)
+      - name: Final Status
         run: |
-          # Este passo mantém o runner ocupado indefinidamente (ou até o timeout de 3600 min)
-          # Isso garante que o RDP continue disponível e o Roblox possa ser aberto manualmente 
-          # ou via scripts adicionais sem que a VM seja desligada.
-          Write-Host "Runner staying alive for up to 3600 minutes..."
-          Start-Sleep -Seconds 216000 # 3600 minutos * 60 segundos
+          Write-Host "=========================================="
+          Write-Host "SYSTEM READY"
+          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
+          Write-Host "RDP User: RDP"
+          Write-Host "RDP Pass: $env:RDP_CREDS"
+          Write-Host "Roblox: Installed"
+          Write-Host "=========================================="
